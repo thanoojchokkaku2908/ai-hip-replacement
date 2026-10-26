@@ -1,0 +1,255 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>AI Robotic Hip Replacement Simulator</title>
+<style>
+:root{color-scheme:dark;--bg:#0e1a22;--pn:#15262f;--ln:#2b414d;--tx:#e6edf0;--mu:#8ea3ad;--sg:#f2b134;--cy:#3fd0c9;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI",system-ui,sans-serif}
+#app{display:flex;height:100%}#vp{flex:1;position:relative;min-width:0}
+canvas#c,canvas#o{position:absolute;inset:0;width:100%;height:100%}#o{pointer-events:none}
+aside{width:340px;overflow:auto;background:var(--pn);border-left:1px solid var(--ln);padding:12px}
+h1{font-size:17px;margin:0}h2{font-size:14px;margin:12px 0 6px}h3{margin:0;font-size:15px;color:var(--sg)}em{color:var(--cy);font-style:normal;font-size:12px}
+.sub{color:var(--mu);margin:2px 0 8px;font-size:12px}
+button{background:#1d3441;color:var(--tx);border:1px solid var(--ln);border-radius:6px;padding:6px 9px;margin:2px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--cy)}button:focus-visible{outline:2px solid var(--sg)}button.on{background:var(--sg);color:#10202a;border-color:var(--sg)}button:disabled{opacity:.4;cursor:default}
+#tl button{display:block;width:100%;text-align:left;margin:2px 0}#alg button{display:block;width:100%;text-align:left}#alg small{color:var(--mu);float:right}
+#info{background:#102029;border:1px solid var(--ln);border-radius:8px;padding:10px;margin-top:10px}#info p{margin:6px 0 0;color:#c7d5db}
+#pidui{display:none;font-size:12px}#pidui label{display:grid;grid-template-columns:34px 1fr 34px;align-items:center}
+#cap{position:absolute;left:12px;right:12px;bottom:12px;background:#0b151ccc;border:1px solid var(--ln);border-radius:8px;padding:8px 12px;display:none}
+#tut{position:absolute;left:12px;top:12px;max-width:340px;background:#0b151cee;border:1px solid var(--sg);border-radius:8px;padding:10px 12px}
+#sp{width:100%;height:54px;display:none;margin-top:6px}
+@media(max-width:820px){#app{flex-direction:column}#vp{flex:none;height:55%}aside{width:auto;flex:1;border-left:0;border-top:1px solid var(--ln)}}
+</style></head><body><div id="app"><div id="vp"><canvas id="c"></canvas><canvas id="o"></canvas>
+<div id="tut"><b>How to play</b><br>Press <b>Start surgery</b> to watch the robot run all 9 stages, or click a stage. Drag to rotate, scroll to zoom. Pick an algorithm on the right to see it drive the robot. In grid mode, click a cell to move the target.<br><button onclick="this.parentNode.remove()">Got it</button></div><div id="cap"></div></div>
+<aside><h1>AI Robotic Hip Replacement</h1><p class="sub">Educational simulation. Not a clinical tool; the workflow is simplified. Needs internet (Three.js from a CDN).</p>
+<div id="tl"></div>
+<div><button id="bStart">Start surgery</button><button id="bPause">Pause</button><button id="bStep">Step</button><button id="bPrev">Prev stage</button><button id="bNext">Next stage</button><button id="bReset">Reset stage</button><button id="bRestart">Replay</button></div>
+<label>Speed <input type="range" id="spd" min=".25" max="4" step=".25" value="1"></label>
+<div><button id="bView">Close-up view</button><button id="bGrid">Grid</button><button id="bSeg">Segmentation</button><button id="bExp">Exploded view</button></div>
+<h2>Algorithms</h2><div id="alg"></div>
+<div id="info"></div><canvas id="sp" width="300" height="54"></canvas>
+<div id="pidui"><label>Kp<input type="range" id="kp" min="0" max="20" step=".5" value="6"><span id="kpv">6</span></label><label>Ki<input type="range" id="ki" min="0" max="5" step=".1" value=".4"><span id="kiv">.4</span></label><label>Kd<input type="range" id="kd" min="0" max="10" step=".2" value="3"><span id="kdv">3</span></label><label>X<input type="range" id="tx" min="-3" max="3" step=".1" value=".6"><span></span></label><label>Y<input type="range" id="ty" min="-1" max="3.5" step=".1" value="1.4"><span></span></label><label>Z<input type="range" id="tz" min="0" max="3" step=".1" value="1.8"><span></span></label></div>
+</aside></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+'use strict';
+const $=i=>document.getElementById(i),V=(x,y,z)=>new THREE.Vector3(x,y,z),R=Math.random,PI=Math.PI;
+/* ---------- scene ---------- */
+const rend=new THREE.WebGLRenderer({canvas:$('c'),antialias:true});rend.shadowMap.enabled=true;rend.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x10222c);scene.fog=new THREE.Fog(0x10222c,16,34);
+const cam=new THREE.PerspectiveCamera(45,1,.1,60),ctl=new THREE.OrbitControls(cam,$('c'));ctl.enableDamping=true;
+const VW={full:[V(4.5,2.8,8),V(.2,.7,.8)],close:[V(2.2,1.9,4.2),V(.4,1.1,.5)]};let view='full';cam.position.copy(VW.full[0]);ctl.target.copy(VW.full[1]);
+scene.add(new THREE.HemisphereLight(0xcfe8ff,0x1a2a33,.75));
+const sun=new THREE.DirectionalLight(0xffffff,.9);sun.position.set(3,8,6);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);Object.assign(sun.shadow.camera,{left:-8,right:8,top:8,bottom:-8});sun.shadow.camera.updateProjectionMatrix();scene.add(sun);
+const M=(c,r=.6,m=0,o={})=>new THREE.MeshStandardMaterial(Object.assign({color:c,roughness:r,metalness:m},o));
+const add=(p,g,m,x=0,y=0,z=0)=>{const o=new THREE.Mesh(g,m);o.position.set(x,y,z);o.castShadow=o.receiveShadow=true;p.add(o);return o};
+const limb=(p,a,b,r1,r2,m)=>{const d=b.clone().sub(a),o=add(p,new THREE.CylinderGeometry(r2,r1,d.length(),16),m);o.position.copy(a).add(b).multiplyScalar(.5);o.quaternion.setFromUnitVectors(V(0,1,0),d.normalize());return o};
+const hemi=r=>new THREE.SphereGeometry(r,32,16,0,PI*2,0,PI/2).rotateX(PI/2);
+const DS=THREE.DoubleSide;
+/* room */
+add(scene,new THREE.PlaneGeometry(40,40),M(0x1b3340,.9),0,-2.4,0).rotation.x=-PI/2;
+add(scene,new THREE.BoxGeometry(4.6,.18,3),M(0x9fb2bb,.4,.3),.2,-1.75,.4);add(scene,new THREE.CylinderGeometry(.3,.5,.7),M(0x6d7f89),.2,-2.1,.4);
+const tray=add(scene,new THREE.BoxGeometry(4.4,.08,1.2),M(0xc9d3d9,.3,.6),-.3,-1.6,2.4);add(scene,new THREE.CylinderGeometry(.1,.1,.8),M(0x6d7f89),-.3,-2,2.4);
+add(scene,new THREE.BoxGeometry(1.2,1,.3),M(0x24343d),4,-1.9,-1.8);add(scene,new THREE.PlaneGeometry(.9,.6),new THREE.MeshBasicMaterial({color:0x3fd0c9}),4,-1.7,-1.64);
+for(const x of[-1.5,2]){add(scene,new THREE.CylinderGeometry(.2,.8,.3,24),M(0xdfe7ea),x,5.4,.5);const s=new THREE.SpotLight(0xffffff,.5,18,.6,.5);s.position.set(x,5.3,.5);s.target.position.set(0,1,.5);scene.add(s,s.target)}
+/* anatomy */
+const C=V(0,1.2,.1),CUT=V(.9,.7,.3),FO=V(.9,-.35,.8);
+const mPel=M(0xd9cfb8,.8),mSock=M(0xe3d9c2,.8),mBowl=M(0xe9e0cc,.8,0,{side:DS}),mCart=M(0xe8a0a8,.5,0,{side:DS}),mFem=M(0xe9dfc9,.7,0,{transparent:true}),mHead=M(0xefe6d2,.6,0,{transparent:true});
+const mTi=M(0xc5ccd2,.25,.85,{side:DS}),mPoly=M(0x8fd0ff,.5,0,{side:DS});
+const pelvis=new THREE.Group();scene.add(pelvis);
+add(pelvis,new THREE.SphereGeometry(1,32,24),mPel,-.5,2.5,-.5).scale.set(1.3,1.5,.35);add(pelvis,new THREE.SphereGeometry(.8,20,16),mPel,-2,2.6,-.7).scale.set(.6,1.4,.4);
+limb(pelvis,V(0,1.2,-.1),V(-1.2,-.1,-.2),.28,.2,mPel);limb(pelvis,V(-1.2,-.1,-.2),V(-1.9,.8,-.3),.2,.25,mPel);
+add(pelvis,new THREE.TorusGeometry(.52,.14,16,40),mSock,C.x,C.y,C.z-.05);
+add(pelvis,hemi(.46),mBowl,C.x,C.y,C.z-.05);const cart=add(pelvis,hemi(.5),mCart,C.x,C.y,C.z-.05);
+const femur=new THREE.Group();femur.position.copy(FO);scene.add(femur);
+limb(femur,CUT,V(CUT.x+.1,-1.5,CUT.z),.22,.24,mFem);add(femur,new THREE.SphereGeometry(.27,16,12),mFem,CUT.x+.12,CUT.y-.15,CUT.z);
+const capD=add(femur,new THREE.CylinderGeometry(.24,.24,.03,24),mFem,CUT.x,CUT.y,CUT.z);
+const canal=add(femur,new THREE.CylinderGeometry(.17,.17,.04,24),M(0x3a2418),CUT.x,CUT.y+.02,CUT.z);canal.visible=false;
+const cutDisc=add(femur,new THREE.CylinderGeometry(.4,.4,.01,24),new THREE.MeshBasicMaterial({color:0xff3b3b,transparent:true,opacity:.5}),CUT.x,CUT.y+.05,CUT.z);cutDisc.visible=false;
+const nh=new THREE.Group();femur.add(nh);limb(nh,CUT,C,.2,.18,mHead);add(nh,new THREE.SphereGeometry(.38,24,18),mHead,C.x,C.y,C.z+.1);
+/* implants (wrapper > part, so an explode offset never fights a stage tween) */
+const wrap={};const part=(n,f)=>{const w=new THREE.Group(),p=new THREE.Group();w.add(p);scene.add(w);wrap[n]=w;f(p);return p};
+const dir=C.clone().sub(CUT).normalize();
+const cup=part('cup',p=>{add(p,hemi(.42),mTi);add(p,new THREE.TorusGeometry(.42,.03,10,36),mTi)});
+const liner=part('liner',p=>{add(p,hemi(.38),mPoly);add(p,new THREE.TorusGeometry(.38,.035,10,36),M(0xffffff,.4))});
+const stem=part('stem',p=>{limb(p,V(0,-1.1,0),V(0,0,0),.08,.2,mTi);add(p,new THREE.CylinderGeometry(.27,.27,.04,20),mTi,0,.02,0);limb(p,V(0,0,0),dir.clone().multiplyScalar(.8),.12,.08,mTi)});
+const head=part('head',p=>add(p,new THREE.SphereGeometry(.28,28,20),M(0xe4e8ea,.1,.95)));
+const PT={cup:V(-1.65,-1.12,2.4),liner:V(-.8,-1.18,2.4),stem:V(.9,-1.35,2.4),head:V(1.5,-1.28,2.4)};
+const Q0={cup:new THREE.Euler(-PI/2,0,0),liner:new THREE.Euler(-PI/2,0,0),stem:new THREE.Euler(0,0,-PI/2),head:new THREE.Euler()};
+const OFF={cup:V(-.3,0,-.6),liner:V(0,0,.8),head:V(.1,.6,1.4),stem:V(.8,-.5,0)};
+/* robot arm: yaw J1, shoulder J2, elbow J3 (analytic 2-link IK) */
+const L1=2.8,L2=3,mArm=M(0xf2b134,.45,.3),mDk=M(0x2a3a44,.5,.6);
+add(scene,new THREE.CylinderGeometry(.5,.7,.5),mDk,-2.6,-2.15,3.5);add(scene,new THREE.CylinderGeometry(.3,.3,1.9),mDk,-2.6,-1.35,3.5);
+const J1=new THREE.Group();J1.position.set(-2.6,-.4,3.5);scene.add(J1);add(J1,new THREE.SphereGeometry(.42,20,16),mDk);
+const J2=new THREE.Group();J1.add(J2);add(J2,new THREE.BoxGeometry(.4,.4,L1),mArm,0,0,L1/2);
+const J3=new THREE.Group();J3.position.z=L1;J2.add(J3);add(J3,new THREE.SphereGeometry(.36,20,16),mDk);add(J3,new THREE.BoxGeometry(.32,.32,L2-.9),mArm,0,0,(L2-.9)/2);
+const TH=new THREE.Group();TH.position.z=L2;J3.add(TH);
+const tools={},mkTool=n=>{const g=new THREE.Group();TH.add(g);tools[n]=g;return g};
+const ream=new THREE.Group();mkTool('ream').add(ream);add(ream,hemi(.3),mTi,0,0,-.2);add(ream,new THREE.CylinderGeometry(.05,.05,.7).rotateX(PI/2),mTi,0,0,-.55);
+add(mkTool('broach'),new THREE.BoxGeometry(.14,.14,.9),mTi,0,0,-.45);add(tools.broach,new THREE.BoxGeometry(.2,.04,.5),mTi,0,0,-.2);
+add(mkTool('saw'),new THREE.BoxGeometry(.5,.03,.5),mTi,0,0,-.25);add(tools.saw,new THREE.BoxGeometry(.1,.1,.6),mDk,0,0,-.6);
+const jA=add(mkTool('grip'),new THREE.BoxGeometry(.06,.18,.45),mDk,.2,0,-.2),jB=add(tools.grip,new THREE.BoxGeometry(.06,.18,.45),mDk,-.2,0,-.2);add(tools.grip,new THREE.BoxGeometry(.4,.2,.1),mDk,0,0,-.5);
+let curTool='grip';const showTool=n=>{curTool=n;for(const k in tools)tools[k].visible=k===n};showTool('grip');
+const tip=V(0,0,0),HOME=V(-1,.6,2.6);tip.copy(HOME);let held=null,spinning=false;
+function armIK(){const s=J1.position,dx=tip.x-s.x,dz=tip.z-s.z,dy=tip.y-s.y,r=Math.hypot(dx,dz),d=Math.min(Math.max(Math.hypot(r,dy),.3),L1+L2-.02);
+ J1.rotation.y=Math.atan2(dx,dz);const g=Math.atan2(dy,r),al=Math.acos(Math.min(1,Math.max(-1,(L1*L1+d*d-L2*L2)/(2*L1*d)))),t1=g+al;
+ const a2=Math.atan2(Math.sin(g)*d-L1*Math.sin(t1),Math.cos(g)*d-L1*Math.cos(t1));J2.rotation.x=-t1;J3.rotation.x=-(a2-t1)}
+/* overlays: plan, registration, segmentation */
+const ghost=add(scene,new THREE.SphereGeometry(.46,16,12),new THREE.MeshBasicMaterial({color:0x3fd0c9,wireframe:true}),C.x,C.y,C.z);
+const ring=add(scene,new THREE.TorusGeometry(.7,.02,8,40),new THREE.MeshBasicMaterial({color:0xf2b134}),C.x,C.y,C.z+.7);
+const route=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([HOME,V(-1.2,1.8,2.4),V(-.4,1.5,1.5),C.clone().add(V(0,0,.7))]),24,.025,6),new THREE.MeshBasicMaterial({color:0x3fd0c9}));scene.add(route);
+const axes=new THREE.AxesHelper(1.3);axes.position.copy(C);scene.add(axes);
+const REG=[V(-.5,3.1,-.18),V(-1.3,2.4,-.23),V(0,1.72,.05),CUT.clone().add(FO).add(V(0,-.5,.24)),CUT.clone().add(FO).add(V(.1,-1.1,.24))];
+const regM=REG.map(p=>{const m=add(scene,new THREE.SphereGeometry(.08,12,8),new THREE.MeshBasicMaterial({color:0xff4d4d}),p.x,p.y,p.z);return m});
+const scan=add(scene,new THREE.BoxGeometry(5,.05,1.6),new THREE.MeshBasicMaterial({color:0x3fd0c9,transparent:true,opacity:.45}),0,0,.4);
+const spark=new THREE.PointLight(0xffa040,0,4);scene.add(spark);
+const SEG=[[mPel,0x4d8dff],[mSock,0x3fd68a],[mBowl,0x3fd68a],[mFem,0xff9a3c],[mHead,0xff5ec8]];SEG.forEach(([m])=>m.userData.c=m.color.getHex());
+let segOn=false;const setSeg=v=>{segOn=v;SEG.forEach(([m,c])=>m.color.setHex(v?c:m.userData.c))};
+function hideAll(){[ghost,ring,route,axes,scan,grid,mk,pidG].forEach(o=>o.visible=false);regM.forEach(m=>m.visible=false);scan.visible=false;pathG.children.slice().forEach(c=>pathG.remove(c));$('pidui').style.display=$('sp').style.display='none'}
+/* ---------- tween engine (cancel-safe) ---------- */
+let T=[],tok=0,paused=false,spd=1,instant=false,tm=0;
+const ease=k=>k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+const tween=(d,f)=>new Promise((res,rej)=>{if(instant||d<=0){f(1);return res()}T.push({d,t:0,f,res,rej})});
+const sleep=d=>tween(d,()=>{});
+const go=(P,d)=>{const a=tip.clone();return tween(d,k=>tip.lerpVectors(a,P,ease(k)))};
+const rot=(o,q,d)=>{const a=o.quaternion.clone();return tween(d,k=>o.quaternion.copy(a).slerp(q,ease(k)))};
+const camTo=(p,t,d)=>{const a=cam.position.clone(),b=ctl.target.clone();return tween(d,k=>{k=ease(k);cam.position.lerpVectors(a,p,k);ctl.target.lerpVectors(b,t,k)})};
+const orbit=a=>{const p=cam.position.clone().sub(ctl.target).applyAxisAngle(V(0,1,0),a);cam.position.copy(ctl.target).add(p)};
+const spin=(d,a)=>{let l=0;return tween(d,k=>{orbit((k-l)*a);l=k})};
+function cancel(){tok++;T.forEach(t=>t.rej('x'));T=[];held=null;spinning=false;spark.intensity=0}
+/* ---------- surgical stages ---------- */
+let plan=[0,0,40,15];
+const poseQ=p=>new THREE.Quaternion().setFromEuler(new THREE.Euler((p[2]-40)*PI/180,(p[3]-15)*PI/180*.8,0)),poseP=p=>C.clone().add(V(p[0],p[1],0));
+const up=(p,h)=>p.clone().add(V(0,h,0)),cap=t=>{$('cap').style.display=t?'block':'none';$('cap').textContent=t||''};
+async function pick(o,P){showTool('grip');await go(up(P,.9),1);await go(P,.7);held=o;await sleep(.3);await go(up(P,.9),.7)}
+const seat=async P=>{await go(P.clone().add(V(0,0,-.06)),.25);await go(P,.25);held=null};
+const STG=['Planning','Registration','Reaming the socket','Cup insertion','Femoral preparation','Stem insertion','Liner insertion','Head placement','Final assembly'];
+const DSC=['Transparent overlay of pelvis, acetabulum, femoral head and femur. Cyan wireframe is the proposed implant position; the line is the planned tool route.','Red reference points on pelvis and femur are touched by the probe, aligning the virtual model with the robot coordinate axes (simulated registration).','The reamer spins into the socket along the planned axis. The pink cartilage layer is removed to reveal prepared bone.','The robot grips the separate cup, carries it to the socket, aligns it to the planned orientation and seats it.','The femoral head is cut away, the canal is exposed, and a broach enters and leaves the canal.','The robot aligns the stem with the prepared canal and lowers it in. The femur is shown semi-transparent.','The plastic liner (blue) is placed inside the metal cup.','The ball is slid along the stem taper and seated, then the femur is reduced into the joint.','Cup, liner, stem and head as separate parts. Try the exploded view.'];
+const S=[
+async()=>{showTool('grip');[ghost,ring,route,scan].forEach(o=>o.visible=true);setSeg(true);cap('Planning: scan overlay, planned implant (cyan) and tool route');
+ const y0=-1.5;await tween(3,k=>scan.position.y=y0+k*5.5);scan.visible=false;await spin(4,PI*.5);cap();setSeg(false)},
+async()=>{ghost.visible=ring.visible=false;axes.visible=true;axes.scale.setScalar(.01);regM.forEach(m=>{m.visible=true;m.material.color.setHex(0xff4d4d)});showTool('grip');
+ await tween(1,k=>axes.scale.setScalar(.01+k));for(let i=0;i<REG.length;i++){cap('Registering point '+(i+1)+' of '+REG.length);await go(REG[i].clone().add(V(0,0,.5)),.7);await go(REG[i],.4);regM[i].material.color.setHex(0x3fd68a);await sleep(.2)}
+ await go(HOME,.8);cap('Model aligned with robot frame (simulated registration)');await sleep(1.2);cap()},
+async()=>{showTool('ream');await go(C.clone().add(V(0,0,1.8)),1.2);await go(C.clone().add(V(0,0,.75)),1);spinning=true;const c0=new THREE.Color(0xe9e0cc),c1=new THREE.Color(0xd9907a);
+ await tween(3.5,k=>{tip.copy(C).add(V(.03*Math.sin(k*40),.03*Math.cos(k*37),.75-.55*k));cart.scale.setScalar(1-.5*k);mBowl.color.copy(c0).lerp(c1,k);spark.position.copy(tip);spark.intensity=1.5*R()});
+ spark.intensity=0;cart.visible=false;await go(C.clone().add(V(0,0,1.8)),.8);spinning=false;await go(HOME,1)},
+async()=>{await pick(cup,PT.cup);const tq=poseQ(plan),P=poseP(plan);await Promise.all([go(P.clone().add(V(0,0,1.6)),1.6),rot(cup,tq,1.6)]);
+ cap('Aligning cup to the planned orientation');await go(P.clone().add(V(0,0,.5)),1);cap();await go(P,1.1);await seat(P);await go(P.clone().add(V(0,0,1.6)),.8);await go(HOME,1)},
+async()=>{await Promise.all([camTo(V(4.8,1.6,4.8),CUT.clone().add(FO),1.5),go(CUT.clone().add(FO).add(V(-.5,.5,.6)),1.5)]);showTool('saw');cutDisc.visible=true;const Z=CUT.clone().add(FO);
+ await tween(1.6,k=>tip.copy(Z).add(V(-.5+.9*Math.sin(k*20)*.5,.35,.5)));cap('Femoral head separated');
+ await tween(1.6,k=>{nh.position.set(-.6*k,1.6*k,.5*k);mHead.opacity=1-k});nh.visible=false;cutDisc.visible=false;canal.visible=true;mFem.opacity=.6;
+ await go(Z.clone().add(V(0,1.3,.1)),.8);showTool('broach');await go(Z.clone().add(V(0,1.1,0)),.4);cap('Broaching the femoral canal');
+ await tween(2.4,k=>{tip.copy(Z).add(V(0,1.1-1.6*Math.sin(k*PI),0))});canal.material.color.setHex(0x6a3f2a);cap();await go(HOME,1)},
+async()=>{const Z=CUT.clone().add(FO),id=new THREE.Quaternion();await pick(stem,PT.stem);await Promise.all([go(Z.clone().add(V(0,1.2,0)),1.8),rot(stem,id,1.8)]);cap('Aligning stem with canal');await sleep(.4);cap();await go(Z.clone().add(V(0,.25,0)),1.2);await seat(Z);femur.attach(wrap.stem);await go(HOME,1.2)},
+async()=>{const tq=poseQ(plan),P=poseP(plan);await pick(liner,PT.liner);await Promise.all([camTo(VW.close[0],VW.close[1],1.5),go(P.clone().add(V(0,0,1.3)),1.6),rot(liner,tq,1.6)]);await go(P.clone().add(V(0,0,.4)),1);await go(P,.8);await seat(P);await go(P.clone().add(V(0,0,1.6)),.8);await go(HOME,1)},
+async()=>{const Z=C.clone().add(FO);await pick(head,PT.head);await Promise.all([camTo(V(3.4,2.2,4.6),V(.9,.9,.8),1.4),go(Z.clone().add(dir.clone().multiplyScalar(.9)),1.8)]);cap('Aligning ball with the stem taper');await go(Z,1.2);cap();await seat(Z);femur.attach(wrap.head);await go(HOME,1)},
+async()=>{const tgt=poseP(plan).sub(C);const a=femur.position.clone();showTool('grip');cap('Reducing the joint');await Promise.all([camTo(VW.close[0],VW.close[1],1.5),tween(2,k=>femur.position.lerpVectors(a,tgt,ease(k)))]);
+ for(const k in wrap){const p=wrap[k].children[0];p.userData.b=p.position.clone()}final=true;cap('Complete: cup, liner, stem and head assembled. Use Exploded view or Replay.');if(!instant)await spin(6,PI*2)}];
+let cur=-1,final=false,expl=false,ex=0;
+function resetScene(){tip.copy(HOME);held=null;femur.position.copy(FO);nh.position.set(0,0,0);nh.visible=true;mHead.opacity=1;mFem.opacity=1;canal.visible=cutDisc.visible=false;canal.material.color.setHex(0x3a2418);
+ for(const k in wrap){const w=wrap[k],p=w.children[0];scene.add(w);w.position.set(0,0,0);p.position.copy(PT[k]);p.quaternion.setFromEuler(Q0[k])}
+ cart.visible=true;cart.scale.setScalar(1);mBowl.color.setHex(0xe9e0cc);setSeg(false);final=false;expl=false;ex=0;showTool('grip');cap();spark.intensity=0;optMode=false;
+ view='full';cam.position.copy(VW.full[0]);ctl.target.copy(VW.full[1]);$('bView').textContent='Close-up view'}
+function halt(){cancel();algo=null;mode='';yolo=false;hideAll();setSeg(false);pathG.clear()}
+async function runFrom(n,all){halt();resetScene();instant=true;cur=-1;ui();try{for(let i=0;i<n;i++)await S[i]()}catch(e){}instant=false;if(n>0)hideAll();const my=tok;
+ try{for(let i=n;i<9;i++){cur=i;ui();await S[i]();if(!all)break;await sleep(.6)}}catch(e){if(e!=='x')console.error(e)}}
+/* ---------- grid search (A*, UCS) ---------- */
+const GW=16,GH=12,CS=.4,GX=-3.2,GY=-.4,GZ=1.8,W=new Array(GW*GH).fill(1);
+for(let j=0;j<8;j++)W[j*GW+5]=Infinity;for(let j=6;j<10;j++)for(let i=7;i<12;i++)W[j*GW+i]=5;for(let j=2;j<5;j++)for(let i=9;i<13;i++)W[j*GW+i]=5;
+for(let i=2;i<4;i++)for(let j=3;j<5;j++)W[j*GW+i]=Infinity;
+let start=[0,1],goal=[8,4];const grid=new THREE.Group(),cells=[];scene.add(grid);
+for(let j=0;j<GH;j++)for(let i=0;i<GW;i++){const m=new THREE.Mesh(new THREE.PlaneGeometry(CS*.92,CS*.92),new THREE.MeshBasicMaterial({transparent:true,side:DS,depthWrite:false}));m.position.set(GX+i*CS,GY+j*CS,GZ);m.userData.id=j*GW+i;grid.add(m);cells.push(m)}
+const pathG=new THREE.Group();scene.add(pathG);const cpos=id=>V(GX+(id%GW)*CS,GY+(id/GW|0)*CS,GZ);
+const paint=(st,extra)=>{cells.forEach((m,id)=>{let c=0x1d4a5c,o=.25,w=W[id];if(w===Infinity){c=0x7a2b2b;o=.8}else if(w>1){c=0x6b4a9e;o=.55}
+ if(extra&&extra.u&&extra.u.has(id)){c=0x2a56b0;o=.55}if(st&&st.closed&&st.closed.has(id)){c=0x3fd0c9;o=.6}if(st&&st.open&&st.open.includes(id)){c=0xf2b134;o=.7}
+ if(st&&st.cur===id){c=0xffffff;o=1}if(st&&st.path&&st.path.includes(id)){c=0xffd34d;o=1}if(id===start[1]*GW+start[0]){c=0x3fd68a;o=1}if(id===goal[1]*GW+goal[0]){c=0xff5ec8;o=1}
+ m.material.color.setHex(c);m.material.opacity=o})};
+function* search(useH){const gi=goal[1]*GW+goal[0],H=n=>useH?Math.abs(n%GW-goal[0])+Math.abs((n/GW|0)-goal[1]):0,s=start[1]*GW+start[0];
+ const g=new Map([[s,0]]),par=new Map(),open=[[H(s),s]],closed=new Set();let n0=0;
+ while(open.length){open.sort((a,b)=>a[0]-b[0]||H(a[1])-H(b[1]));const[f,n]=open.shift();if(closed.has(n))continue;closed.add(n);n0++;const op=open.map(o=>o[1]);
+  if(n===gi){const path=[];for(let c=gi;c!==undefined;c=par.get(c))path.unshift(c);yield{done:1,path,cost:g.get(n),closed,open:[],cur:n,g:g.get(n),h:0,f,n:n0};return}
+  yield{cur:n,g:g.get(n),h:H(n),f,open:op,closed,n:n0};
+  for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){const i=n%GW+dx,j=(n/GW|0)+dy;if(i<0||j<0||i>=GW||j>=GH)continue;const m=j*GW+i;if(W[m]===Infinity||closed.has(m))continue;const ng=g.get(n)+W[m];if(!g.has(m)||ng<g.get(m)){g.set(m,ng);par.set(m,n);open.push([ng+H(m),m])}}}
+ yield{done:1,path:null,closed,open:[],n:n0}}
+let algo=null,mode='',yolo=false,optMode=false;
+const info=(t,ty,b)=>{$('info').innerHTML='<h3>'+t+'</h3><em>'+ty+'</em><p>'+b+'</p>'};
+const TX={astar:['A* Search','Search · heuristic path planning','f(n) = g(n) + h(n). Expands the open node with the lowest f, using the Manhattan distance as h. Cyan = closed, amber = open, purple = tissue (cost 5), red = blocked, green = start, pink = target. Click a cell to move the target. This is a generic grid route, not a safe surgical trajectory.'],
+ ucs:['Uniform-Cost Search','Search · lowest accumulated cost','Same map and rules as A*, but h(n) = 0, so it expands nodes in order of g(n) only. It finds a lowest-cost route yet explores more nodes. Lowest numeric cost does not mean safest real route.']};
+function startGrid(useH,cmp){halt();resetScene();showTool('ream');grid.visible=true;mode='grid';const k=useH?'astar':'ucs';
+ if(cmp){paint();return}algo={gen:search(useH),acc:0,dt:.09,k,done:0,speed:0};paint();info(TX[k][0],TX[k][1],TX[k][2]+'<br>Press Step or wait.')}
+function stepAlgo(){if(!algo||algo.done)return;const r=algo.gen.next();if(r.done)return;const st=r.value;
+ if(mode==='grid'){paint(st);const t=TX[algo.k];let live='<br><b>Node '+st.n+'</b> · g='+st.g+' h='+st.h+' f='+st.f+' · open '+st.open.length+' · closed '+st.closed.size;
+  if(st.done){algo.done=1;if(!st.path){info(t[0],t[1],'No path found.');return}live+='<br><b>Path found.</b> total cost '+st.cost+', nodes explored '+st.n;drawPath(st.path,0xffd34d,0);followPath(st.path)}
+  info(t[0],t[1],t[2]+live)}
+ else if(mode==='opt')showOpt(st)}
+const drawPath=(path,c,dz)=>{const pts=path.map(id=>cpos(id).add(V(0,0,dz+.03)));const cp=new THREE.CurvePath();for(let i=1;i<pts.length;i++)cp.add(new THREE.LineCurve3(pts[i-1],pts[i]));
+ if(pts.length>1)pathG.add(new THREE.Mesh(new THREE.TubeGeometry(cp,pts.length*3,.035,6),new THREE.MeshBasicMaterial({color:c})))};
+async function followPath(path){const pts=path.map(cpos),my=tok;try{await go(pts[0],1);for(let i=1;i<pts.length;i++){const a=pts[i-1],b=pts[i];await tween(.14,k=>tip.lerpVectors(a,b,k))}}catch(e){}}
+function compare(){startGrid(1,true);const r=[1,0].map(h=>{const g=search(h);let s;do{s=g.next().value}while(!s.done);return s});const[a,u]=r;paint(a,{u:u.closed});drawPath(u.path,0x4d8dff,.02);drawPath(a.path,0xffd34d,0);
+ info('A* vs UCS on the same map','Search comparison','Identical grid, moves and costs.<br><b>A*</b> (gold): cost '+a.cost+', explored '+a.n+' nodes.<br><b>UCS</b> (blue path): cost '+u.cost+', explored '+u.n+' nodes.<br>UCS orders nodes by g(n); A* by g(n)+h(n). Both find lowest-cost routes here, A* with fewer expansions. Blue cells were explored by UCS only. Cost is a toy number, not safety.')}
+/* ---------- optimisation of cup pose (illustrative objective) ---------- */
+const LO=[-.3,-.3,15,-10],HI=[.3,.3,70,40],ST=[.06,.06,3,3];
+const OBJ=p=>100-((p[0]*p[0]+p[1]*p[1])*400+((p[2]-40)/5)**2+((p[3]-15)/4)**2+5*(1+Math.sin(p[2]*.8)*Math.sin(p[3]*1.1)));
+const clampP=p=>p.map((v,i)=>Math.min(HI[i],Math.max(LO[i],v))),rnd=()=>LO.map((l,i)=>l+R()*(HI[i]-l));
+function* hill(){let p=rnd(),s=OBJ(p);const h=[s];for(let n=1;;n++){const nb=[];for(let i=0;i<4;i++)for(const d of[-1,1]){const q=p.slice();q[i]+=d*ST[i];nb.push(clampP(q))}
+ yield{p,s,cands:nb,hist:h,msg:'Step '+n+': compare 8 neighbours (score '+s.toFixed(1)+')'};let b=null,bs=s;nb.forEach(q=>{const v=OBJ(q);if(v>bs){bs=v;b=q}});
+ if(!b){yield{done:1,p,s,cands:nb,hist:h,msg:'Stuck: no neighbour is better. Local optimum '+s.toFixed(1)+'. Press Restart for a new start.'};return}p=b;s=bs;h.push(s)}}
+function* sa(){let p=rnd(),s=OBJ(p),b={p,s},T=25;const h=[s];while(T>.1){const q=clampP(p.map((v,i)=>v+(R()-.5)*2*ST[i]*2.5)),sq=OBJ(q),d=sq-s,pr=Math.exp(d/T),acc=d>0||R()<pr;if(acc){p=q;s=sq}if(s>b.s)b={p:p.slice(),s};h.push(s);
+ yield{p,s,cands:[q],hist:h,msg:'T='+T.toFixed(2)+' · candidate '+sq.toFixed(1)+' · '+(acc?(d>0?'accepted (better)':'accepted although worse (P='+pr.toFixed(2)+')'):'rejected')+' · best '+b.s.toFixed(1)};T*=.95}
+ yield{done:1,p:b.p,s:b.s,cands:[],hist:h,msg:'Cooled. Best candidate '+b.s.toFixed(1)}}
+function* ga(){const N=14;let pop=Array.from({length:N},rnd),best=null;const h=[];for(let g=1;g<=24;g++){const sc=pop.map(OBJ);let bi=0;sc.forEach((v,i)=>{if(v>sc[bi])bi=i});if(!best||sc[bi]>best.s)best={p:pop[bi].slice(),s:sc[bi]};h.push(best.s);
+ const B={p:best.p,s:best.s,hist:h};yield{...B,cands:pop,msg:'Generation '+g+': evaluate fitness, best '+best.s.toFixed(1)};
+ const tour=()=>{const a=R()*N|0,b=R()*N|0;return sc[a]>sc[b]?pop[a]:pop[b]},par=Array.from({length:N},tour);yield{...B,cands:par,msg:'Generation '+g+': selection (tournament)'};
+ let kids=[];for(let i=0;i<N;i+=2){const a=par[i],b=par[i+1],w=R();kids.push(a.map((v,k)=>w*v+(1-w)*b[k]),a.map((v,k)=>(1-w)*v+w*b[k]))}yield{...B,cands:kids,msg:'Generation '+g+': crossover (blend parents)'};
+ kids=kids.map(k=>R()<.35?clampP(k.map((v,i)=>v+(R()-.5)*4*ST[i])):k);kids[0]=best.p.slice();pop=kids;yield{...B,cands:pop,msg:'Generation '+g+': mutation, best kept (elitism)'}}
+ yield{done:1,p:best.p,s:best.s,hist:h,cands:[],msg:'Finished 24 generations. Best '+best.s.toFixed(1)}}
+const mk=new THREE.Group();scene.add(mk);const mks=Array.from({length:16},()=>{const m=new THREE.Mesh(new THREE.SphereGeometry(.05,10,8),new THREE.MeshBasicMaterial());mk.add(m);return m});
+const cupT={p:V(),q:new THREE.Quaternion()},OT={hill:['Hill Climbing','Local search · implant pose optimization','Moves to the best of 8 neighbouring candidate poses until none improves. Fast but can stop at a local optimum.'],sa:['Simulated Annealing','Optimization · escapes local optima','Accepts worse candidates with probability exp(Δ/T) while the temperature T falls, so it can climb out of local optima early on.'],ga:['Genetic Algorithm','Optimization · population search','A population of 14 candidate poses evolves by selection, crossover and mutation across generations.']};
+let okey='';
+function startOpt(k,gen){halt();resetScene();instant=true;(async()=>{try{for(let i=0;i<3;i++)await S[i]()}catch(e){}instant=false;hideAll();mk.visible=true;$('sp').style.display='block'})();
+ optMode=true;mode='opt';okey=k;mk.visible=true;wrap.cup.children[0].position.copy(C).add(V(0,0,1.5));algo={gen,acc:0,dt:.35,done:0};$('sp').style.display='block';info(OT[k][0],OT[k][1],OT[k][2]+'<br>Objective (illustrative, not clinical): alignment error, offset and ripple penalties.');stepAlgo()}
+function showOpt(st){cupT.p.copy(poseP(st.p));cupT.q.copy(poseQ(st.p));mks.forEach(m=>m.visible=false);(st.cands||[]).slice(0,16).forEach((q,i)=>{const m=mks[i],s=OBJ(q);m.visible=true;m.position.set(C.x+q[0],C.y+q[1],C.z+.8);m.material.color.setHSL(Math.max(0,Math.min(.33,(s-60)/120)),1,.55)});
+ if(st.done){algo.done=1;plan=st.p.slice()}info(OT[okey][0],OT[okey][1],OT[okey][2]+'<br>'+st.msg+'<br>Current: x '+st.p[0].toFixed(2)+' y '+st.p[1].toFixed(2)+' inclination '+st.p[2].toFixed(0)+'° anteversion '+st.p[3].toFixed(0)+'° · score '+st.s.toFixed(1)+(st.done?'<br><b>Cup plan updated. Press Start surgery to use it.</b>':''));
+ const c=$('sp').getContext('2d');c.clearRect(0,0,300,54);c.strokeStyle='#3fd0c9';c.beginPath();const h=st.hist||[];h.forEach((v,i)=>{const x=i/Math.max(h.length-1,1)*296+2,y=52-(v-40)/60*50;i?c.lineTo(x,y):c.moveTo(x,y)});c.stroke()}
+/* ---------- PID ---------- */
+const pidG=new THREE.Group();scene.add(pidG);const tgM=add(pidG,new THREE.SphereGeometry(.1,12,8),new THREE.MeshBasicMaterial({color:0xff5ec8})),errL=new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(),V()]),new THREE.LineBasicMaterial({color:0xffd34d}));pidG.add(errL);
+const pid={kp:6,ki:.4,kd:3,v:V(),I:V(),tg:V(.6,1.4,1.8)};
+['kp','ki','kd','tx','ty','tz'].forEach(id=>$(id).oninput=()=>{pid.kp=+$('kp').value;pid.ki=+$('ki').value;pid.kd=+$('kd').value;pid.tg.set(+$('tx').value,+$('ty').value,+$('tz').value);$('kpv').textContent=pid.kp;$('kiv').textContent=pid.ki;$('kdv').textContent=pid.kd});
+function startPid(){halt();resetScene();showTool('ream');mode='pid';pidG.visible=true;$('pidui').style.display='block';pid.v.set(0,0,0);pid.I.set(0,0,0)}
+function pidStep(dt){const e=pid.tg.clone().sub(tip);pid.I.addScaledVector(e,dt).clampScalar(-2,2);const u=e.clone().multiplyScalar(pid.kp).addScaledVector(pid.I,pid.ki).addScaledVector(pid.v,-pid.kd).clampScalar(-40,40);
+ pid.v.addScaledVector(u.addScaledVector(pid.v,-.3),dt).clampLength(0,5);tip.addScaledVector(pid.v,dt);tgM.position.copy(pid.tg);errL.geometry.setFromPoints([tip.clone(),pid.tg.clone()]);
+ info('PID Controller','Feedback control · tool motion','u = Kp·e + Ki·∫e + Kd·de/dt, output clamped to ±40 and speed to 5. Move the target or change gains: low Kd overshoots, Kp=0 never arrives. Yellow line = position error.<br><b>Error '+e.length().toFixed(3)+'</b> · Kp '+pid.kp+' Ki '+pid.ki+' Kd '+pid.kd)}
+/* ---------- simulated vision ---------- */
+async function startCnn(){halt();resetScene();mode='cnn';setSeg(true);scan.visible=true;info('CNN Segmentation','SIMULATED vision','No trained CNN is running. The colours are assigned from known part names to show what a segmentation overlay looks like: blue pelvis, green acetabulum, orange femur, pink femoral head. A real CNN would predict a class per pixel of a CT or X-ray image to support planning.');
+ const my=tok;try{for(;;){await tween(3,k=>scan.position.y=-1.5+k*5.5)}}catch(e){}}
+function startYolo(){info('YOLO Detection','SIMULATED vision','No detector is running. Boxes are projected from the known 3D objects and the confidences are illustrative. A real YOLO model would predict boxes, classes and scores from video frames in one pass. The robot is running stages 4 to 9 so you can watch boxes follow the instruments.');runFrom(3,true);yolo=true}
+const O=$('o');function yolo2d(){const x=O.getContext('2d');x.clearRect(0,0,O.width,O.height);if(!yolo)return;x.font='12px sans-serif';
+ [[tools[curTool],'surgical tool'],[cup,'acetabular cup'],[liner,'liner'],[stem,'femoral stem'],[head,'femoral head'],[tray,'instrument tray']].forEach(([o,l],i)=>{const b=new THREE.Box3().setFromObject(o);if(b.isEmpty())return;let a=1e9,c=1e9,d=-1e9,e=-1e9;
+  for(let k=0;k<8;k++){const p=V(k&1?b.max.x:b.min.x,k&2?b.max.y:b.min.y,k&4?b.max.z:b.min.z).project(cam),px=(p.x+1)/2*O.width,py=(1-p.y)/2*O.height;a=Math.min(a,px);d=Math.max(d,px);c=Math.min(c,py);e=Math.max(e,py)}
+  x.strokeStyle=x.fillStyle=['#f2b134','#3fd0c9','#8fd0ff','#ff9a3c','#ff5ec8','#9fb2bb'][i];x.lineWidth=2;x.strokeRect(a,c,d-a,e-c);x.fillText(l+' '+(.82+.15*Math.abs(Math.sin(tm*.8+i))).toFixed(2)+' (sim)',a+2,c-4)})}
+/* ---------- UI ---------- */
+const ALGS=[['astar','A* Search','Search',()=>startGrid(1)],['ucs','Uniform-Cost Search','Search',()=>startGrid(0)],['cmp','Compare A* vs UCS','Search',compare],['hill','Local Search / Hill Climbing','Optimization',()=>startOpt('hill',hill())],['sa','Simulated Annealing','Optimization',()=>startOpt('sa',sa())],['ga','Genetic Algorithm','Optimization',()=>startOpt('ga',ga())],['pid','PID Controller','Control',startPid],['cnn','CNN Segmentation','Simulated',startCnn],['yolo','YOLO Detection','Simulated',startYolo],['svm','SVM Gait Classifier','Not included',null]];
+ALGS.forEach(([id,n,t,f])=>{const b=document.createElement('button');b.innerHTML=n+'<small>'+t+'</small>';if(!f)b.disabled=true;else b.onclick=()=>{[...$('alg').children].forEach(c=>c.classList.remove('on'));b.classList.add('on');f()};$('alg').appendChild(b)});
+STG.forEach((n,i)=>{const b=document.createElement('button');b.textContent=(i+1)+'. '+n;b.onclick=()=>runFrom(i,false);$('tl').appendChild(b)});
+function ui(){[...$('tl').children].forEach((b,i)=>b.classList.toggle('on',i===cur));if(cur>=0&&mode===''){info((cur+1)+'. '+STG[cur],'Surgical stage',DSC[cur])}}
+$('bStart').onclick=$('bRestart').onclick=()=>runFrom(0,true);$('bPrev').onclick=()=>runFrom(Math.max(0,cur-1),false);$('bNext').onclick=()=>runFrom(Math.min(8,cur+1),false);$('bReset').onclick=()=>runFrom(Math.max(0,cur),false);
+$('bPause').onclick=()=>{paused=!paused;$('bPause').textContent=paused?'Resume':'Pause'};$('bStep').onclick=stepAlgo;$('spd').oninput=e=>spd=+e.target.value;
+$('bView').onclick=()=>{view=view==='full'?'close':'full';$('bView').textContent=view==='full'?'Close-up view':'Full view';cancelCam();camTo(VW[view][0],VW[view][1],1)};
+const cancelCam=()=>{};
+$('bGrid').onclick=()=>{grid.visible=!grid.visible;if(grid.visible)paint()};$('bSeg').onclick=()=>setSeg(!segOn);
+$('bExp').onclick=()=>{if(final)expl=!expl;else{cap('Running to final assembly first');runFrom(8,false).then(()=>{expl=true})}};
+let pd=null;$('c').addEventListener('pointerdown',e=>pd=[e.clientX,e.clientY]);
+$('c').addEventListener('pointerup',e=>{if(!pd||!grid.visible||mode!=='grid'||Math.hypot(e.clientX-pd[0],e.clientY-pd[1])>4)return;const r=$('c').getBoundingClientRect(),rc=new THREE.Raycaster();rc.setFromCamera({x:(e.clientX-r.left)/r.width*2-1,y:-(e.clientY-r.top)/r.height*2+1},cam);
+ const h=rc.intersectObjects(cells)[0];if(h&&W[h.object.userData.id]!==Infinity){const id=h.object.userData.id;goal=[id%GW,id/GW|0];const k=algo?algo.k:'astar';startGrid(k==='astar'?1:0)}});
+function resize(){const v=$('vp'),w=v.clientWidth,h=v.clientHeight;rend.setSize(w,h,false);O.width=w;O.height=h;cam.aspect=w/h;cam.updateProjectionMatrix()}addEventListener('resize',resize);resize();
+let last=performance.now();
+function frame(now){requestAnimationFrame(frame);const dt=Math.min((now-last)/1000,.05);last=now;tm+=dt;
+ if(!paused){const d=dt*spd;for(const t of T.slice()){t.t+=d;const k=Math.min(t.t/t.d,1);t.f(k);if(k>=1){T.splice(T.indexOf(t),1);t.res()}}
+  if(algo&&!algo.done&&(mode==='grid'||mode==='opt')){algo.acc+=d;if(algo.acc>algo.dt){algo.acc=0;stepAlgo()}}
+  if(mode==='pid')for(let i=0;i<4;i++)pidStep(d/4);
+  if(spinning)ream.rotation.z+=dt*25*spd;
+  if(optMode){const p=wrap.cup.children[0];p.position.lerp(cupT.p,.1);p.quaternion.slerp(cupT.q,.1)}
+  if(final){ex+=((expl?1:0)-ex)*Math.min(1,dt*4);for(const k in wrap){const p=wrap[k].children[0];if(p.userData.b)p.position.copy(p.userData.b).addScaledVector(OFF[k],ex)}}}
+ armIK();if(held)held.position.copy(tip);const g=held?.07:.2;jA.position.x+=(g-jA.position.x)*.2;jB.position.x+=(-g-jB.position.x)*.2;
+ ctl.update();rend.render(scene,cam);yolo2d()}
+hideAll();resetScene();cur=-1;info('Ready','Welcome','Press Start surgery, choose a stage, or pick an algorithm. Search, optimization, control and the simulated vision demos each run on the same robot and hip.');requestAnimationFrame(frame);
+</script></body></html>
